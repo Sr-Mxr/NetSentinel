@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetSentinel - Monitor en tiempo real</title>
+    
+    <!-- Bibliotecas necesarias -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #121212;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        .alerta {
+            padding: 10px;
+            margin: 5px;
+            border-radius: 5px;
+            transition: opacity 0.3s ease;
+        }
+        .alerta.critico {
+            background-color: #FF0000;
+            color: white;
+        }
+        .alerta.normal {
+            background-color: #FFA500;
+            color: black;
+        }
+        .navbar, .card {
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+        }
+        .card-header {
+            border-bottom: 1px solid #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+            <div class="container-fluid">
+                <span class="navbar-brand">NetSentinel - Monitor en tiempo real</span>
+                <button id="btnFiltroCritico" class="btn btn-sm btn-danger ms-2">Críticos</button>
+                <button id="btnFiltroNormal" class="btn btn-sm btn-warning ms-2">Normales</button>
+                <button id="btnFiltroTodos" class="btn btn-sm btn-secondary ms-2">Todos</button>
+            </div>
+        </nav>
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card mb-4">
+                    <div class="card-header"><h5>Alertas Actuales</h5></div>
+                    <div class="card-body"><div id="alertas" class="list-group"></div></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h5>Estadísticas</h5></div>
+                    <div class="card-body"><canvas id="graficoEstadisticas"></canvas></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="sticky-top pt-4">
+                    <div class="card mb-4">
+                        <div class="card-header"><h5>Resumen</h5></div>
+                        <div class="card-body"><div id="resumenAlertas"></div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h5>Configuración</h5></div>
+                        <div class="card-body">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="sonidoAlertas">
+                                <label for="sonidoAlertas">Sonido en alertas</label>
+                            </div>
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="notificacionesPush">
+                                <label for="notificacionesPush">Notificaciones push</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const socket = io.connect(window.location.origin);
+        let graficoEstadisticas, sonidoAlertas = false, notificacionesPush = false, filtroActual = 'todos';
+        
+        function actualizarGrafico(datos) {
+            if (!graficoEstadisticas) {
+                const ctx = document.getElementById('graficoEstadisticas').getContext('2d');
+                graficoEstadisticas = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Críticas', 'Normales'],
+                        datasets: [{
+                            label: 'Número de Alertas',
+                            data: [datos.critico, datos.normal],
+                            backgroundColor: ['rgba(255, 0, 0, 0.5)', 'rgba(255, 165, 0, 0.5)'],
+                            borderColor: ['rgba(255, 0, 0, 1)', 'rgba(255, 165, 0, 1)'],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+            } else {
+                graficoEstadisticas.data.datasets[0].data = [datos.critico, datos.normal];
+                graficoEstadisticas.update();
+            }
+        }
+        
+        socket.on("update", function(data) {
+            const alertasDiv = document.getElementById("alertas");
+            alertasDiv.innerHTML = "";
+            let alertasFiltradas = filtroActual === 'todos' ? data.alerts : data.alerts.filter(a => a.tipo === filtroActual);
+            
+            alertasFiltradas.forEach(alert => {
+                const nuevaAlerta = document.createElement("div");
+                nuevaAlerta.classList.add("alerta", alert.tipo);
+                nuevaAlerta.innerText = alert.mensaje;
+                alertasDiv.prepend(nuevaAlerta);
+                nuevaAlerta.style.opacity = 0;
+                setTimeout(() => nuevaAlerta.style.opacity = 1, 50);
+                setTimeout(() => nuevaAlerta.remove(), 10000);
+                
+                if (sonidoAlertas) new Audio('alert_sound.mp3').play();
+                if (notificacionesPush && Notification.permission === "granted")
+                    new Notification("Nueva Alerta", { body: alert.mensaje });
+            });
+            actualizarGrafico({
+                critico: data.alerts.filter(a => a.tipo === 'critico').length,
+                normal: data.alerts.filter(a => a.tipo === 'normal').length
+            });
+            document.getElementById('resumenAlertas').innerText = `Críticos: ${data.alerts.filter(a => a.tipo === 'critico').length}, Normales: ${data.alerts.filter(a => a.tipo === 'normal').length}`;
+        });
+        
+        document.getElementById('btnFiltroCritico').addEventListener('click', () => { filtroActual = 'critico'; socket.emit('request_update'); });
+        document.getElementById('btnFiltroNormal').addEventListener('click', () => { filtroActual = 'normal'; socket.emit('request_update'); });
+        document.getElementById('btnFiltroTodos').addEventListener('click', () => { filtroActual = 'todos'; socket.emit('request_update'); });
+        document.getElementById('sonidoAlertas').addEventListener('change', function() { sonidoAlertas = this.checked; });
+        document.getElementById('notificacionesPush').addEventListener('change', function() { notificacionesPush = this.checked; });
+    </script>
+</body>
+</html>
